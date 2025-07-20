@@ -392,6 +392,10 @@
 ;;; - :default-error-handler - Function or re-frame event that will be called
 ;;;   to handle any otherwise unhandled errors.
 ;;;
+;;; - :firestore-settings - Optional map of Firestore settings. In Firebase v9+,
+;;;   these settings are applied during initialization with initializeFirestore.
+;;;   Example: {:experimentalForceLongPolling true}
+;;;
 (defn init [& {:keys [firebase-app-info
                       firestore-settings
                       get-user-sub
@@ -400,6 +404,8 @@
   (core/set-firebase-state :get-user-sub          get-user-sub
                            :set-user-event        set-user-event
                            :default-error-handler default-error-handler)
-  (core/initialize-app firebase-app-info)
-  (firestore/set-firestore-settings firestore-settings)
+  (let [app (core/initialize-app firebase-app-info)]
+    ;; In Firebase v9+, initialize Firestore with settings if provided
+    (when firestore-settings
+      (firestore/initialize-firestore-with-settings app firestore-settings)))
   (auth/init-auth))

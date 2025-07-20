@@ -6,16 +6,30 @@
    [reagent.ratom :as ratom :refer [make-reaction]]
    [iron.re-utils :as re-utils :refer [<sub >evt event->fn sub->fn]]
    [iron.utils :as utils]
-   [firebase.app :as firebase-app]
-   [firebase.firestore :as firebase-firestore]
+   ["firebase/app" :as firebase-app]
+   ["firebase/firestore" :as firebase-firestore :refer [getFirestore initializeFirestore connectFirestoreEmulator collection doc getDoc getDocs setDoc updateDoc deleteDoc addDoc query where orderBy limit startAt startAfter endAt endBefore onSnapshot writeBatch serverTimestamp deleteField documentId FieldPath DocumentReference CollectionReference]]
    [com.degel.re-frame-firebase.core :as core]
    [com.degel.re-frame-firebase.specs :as specs]
    [com.degel.re-frame-firebase.helpers :refer [promise-wrapper]]))
 
 
+(defn initialize-firestore-with-settings
+  "Initialize Firestore with custom settings. Use this instead of getFirestore() 
+   when you need to configure settings. In Firebase v9+, settings must be provided
+   during initialization, not after."
+  ([app] (initializeFirestore app))
+  ([app settings] (initializeFirestore app (clj->js settings))))
+
 (defn set-firestore-settings
+  "DEPRECATED: Use initialize-firestore-with-settings instead.
+   In Firebase v9+, settings must be configured during initialization."
   [settings]
-  (.settings (js/firebase.firestore) (clj->js (or settings {}))))
+  (js/console.warn "set-firestore-settings is deprecated in Firebase v9+. Use initialize-firestore-with-settings during app initialization instead.")
+  ;; This will likely throw an error in v9+ but kept for compatibility
+  (try
+    (.settings (getFirestore) (clj->js (or settings {})))
+    (catch js/Error e
+      (js/console.error "Failed to set Firestore settings - use initialize-firestore-with-settings instead:" e))))
 
 ;; Extra public functions
 (defn server-timestamp
@@ -28,7 +42,7 @@
                    :data {:name \"document-with-timestamp\"
                           :timestamp (server-timestamp)}}"
   []
-  (.serverTimestamp js/firebase.firestore.FieldValue))
+  (serverTimestamp))
 
 (defn delete-field-value
   "Returns a field value to be used to delete a field.
@@ -40,7 +54,7 @@
   {:firestore/update {:path [:my \"document\"]
                       :data {:field-to-delete (delete-field-value)}}}"
   []
-  (.delete js/firebase.firestore.FieldValue))
+  (deleteField))
 
 (defn document-id-field-path
   "Returns a field path which can be used to refer to ID of a document.
@@ -51,7 +65,7 @@
   {:firestore/get {:path-collection [:my-collection]
                    :where [[(document-id-field-path) :>= \"start\"]]}}"
   []
-  (.documentId firebase.firestore.FieldPath))
+  (documentId))
 
 
 ;; Type Conversion/Parsing
@@ -61,10 +75,9 @@
   See https://firebase.google.com/docs/reference/js/firebase.firestore.CollectionReference"
   [path]
   {:pre [(utils/validate ::specs/path-collection path)]}
-  (if (instance? js/firebase.firestore.CollectionReference path)
+  (if (instance? CollectionReference path)
     path
-    (.collection (js/firebase.firestore)
-                 (str/join "/" (clj->js path)))))
+    (collection (getFirestore) (str/join "/" (clj->js path)))))
 
 (defn clj->DocumentReference
   "Converts a seq of keywords and/or strings into a DocumentReference.
@@ -72,10 +85,9 @@
   See https://firebase.google.com/docs/reference/js/firebase.firestore.DocumentReference"
   [path]
   {:pre [(utils/validate ::specs/path-document path)]}
-  (if (instance? js/firebase.firestore.DocumentReference path)
+  (if (instance? DocumentReference path)
     path
-    (.doc (js/firebase.firestore)
-          (str/join "/" (clj->js path)))))
+    (doc (getFirestore) (str/join "/" (clj->js path)))))
 
 (defn clj->FieldPath
   "Converts a string/keyword or a seq of string/keywords into a FieldPath.
@@ -86,9 +98,9 @@
   [field-path]
   (cond
     (nil? field-path) nil
-    (instance? js/firebase.firestore.FieldPath field-path) field-path
-    (coll? field-path) (apply js/firebase.firestore.FieldPath. (clj->js field-path))
-    :else (js/firebase.firestore.FieldPath. (clj->js field-path))))
+    (instance? FieldPath field-path) field-path
+    (coll? field-path) (FieldPath. (clj->js field-path))
+    :else (FieldPath. (clj->js field-path))))
 
 (defn clj->SetOptions
   "Converts a clojure-style map into a SetOptions satisfying one.
@@ -234,9 +246,9 @@
 ;; re-frame Effects/Subscriptions
 (defn- setter
   ([path data set-options]
-   (.set (clj->DocumentReference path)
-         (clj->js data)
-         (clj->SetOptions set-options)))
+   (setDoc (clj->DocumentReference path)
+           (clj->js data)
+           (clj->SetOptions set-options)))
   ([instance path data set-options]
    (.set instance
          (clj->DocumentReference path)
@@ -244,11 +256,11 @@
          (clj->SetOptions set-options))))
 
 (defn- updater
-  ([path data] (.update (clj->DocumentReference path) (clj->js data)))
+  ([path data] (updateDoc (clj->DocumentReference path) (clj->js data)))
   ([instance path data] (.update instance (clj->DocumentReference path) (clj->js data))))
 
 (defn- deleter
-  ([path] (.delete (clj->DocumentReference path)))
+  ([path] (deleteDoc (clj->DocumentReference path)))
   ([instance path] (.delete instance (clj->DocumentReference path))))
 
 (defn set-effect [{:keys [path data set-options on-success on-failure]}]
@@ -261,7 +273,7 @@
   (promise-wrapper (deleter path) on-success on-failure))
 
 (defn write-batch-effect [{:keys [operations on-success on-failure]}]
-  (let [batch-instance (.batch (js/firebase.firestore))]
+  (let [batch-instance (writeBatch (getFirestore))]
     (run! (fn [[event-type {:keys [path data set-options]}]]
             (case event-type
               :firestore/delete (deleter batch-instance path)
@@ -272,38 +284,46 @@
     (promise-wrapper (.commit batch-instance) on-success on-failure)))
 
 (defn- adder [path data]
-  (.add (clj->CollectionReference path) (clj->js data)))
+  (addDoc (clj->CollectionReference path) (clj->js data)))
 
 (defn add-effect [{:keys [path data on-success on-failure]}]
   (promise-wrapper (adder path data) (reference-parser-wrapper on-success) on-failure))
 
-(defn- query [ref where order-by limit
-              start-at start-after end-at end-before]
-  (as-> ref $
-    (if where
-      (reduce
-        (fn [$$ [field-path op value]] (.where $$ (clj->FieldPath field-path) (clj->js op) (clj->js value)))
-        $ where)
-      $)
-    (if order-by
-      (reduce
-        (fn [$$ order] (.orderBy $$ (clj->js (nth order 0)) (clj->js (nth order 1 :asc))))
-        $ order-by)
-      $)
-    (if limit (.limit $ limit) $)
-    (if start-at (.apply (.-startAt $) $ (clj->js start-at)) $)
-    (if start-after (.apply (.-startAfter $) $ (clj->js start-after)) $)
-    (if end-at (.apply (.-endAt $) $ (clj->js end-at)) $)
-    (if end-before (.apply (.-endBefore $) $ (clj->js end-before)) $)))
+(defn- apply-query-constraints [collection-ref where-clauses order-by limit-count
+                                start-at start-after end-at end-before]
+  (let [constraints (vec (concat
+                          ;; Where constraints
+                          (when where-clauses
+                            (map (fn [[field-path op value]]
+                                   (where (clj->FieldPath field-path) (name op) (clj->js value)))
+                                 where-clauses))
+                          ;; Order by constraints  
+                          (when order-by
+                            (map (fn [order]
+                                   (orderBy (clj->js (nth order 0)) (clj->js (nth order 1 :asc))))
+                                 order-by))
+                          ;; Limit constraint
+                          (when limit-count
+                            [(limit limit-count)])
+                          ;; Cursor constraints - these take individual values, not arrays
+                          (when start-at
+                            [(startAt (clj->js start-at))])
+                          (when start-after
+                            [(startAfter (clj->js start-after))])
+                          (when end-at
+                            [(endAt (clj->js end-at))])
+                          (when end-before
+                            [(endBefore (clj->js end-before))])))]
+    (apply query collection-ref constraints)))
 
 (defn- getter-document [path get-options]
-  (.get (clj->DocumentReference path) (clj->GetOptions get-options)))
+  (getDoc (clj->DocumentReference path) (clj->GetOptions get-options)))
 
 (defn- getter-collection [path get-options where order-by limit
                           start-at start-after end-at end-before]
-  (.get (query (clj->CollectionReference path) where order-by limit
-               start-at start-after end-at end-before)
-        (clj->GetOptions get-options)))
+  (getDocs (apply-query-constraints (clj->CollectionReference path) where order-by limit
+                                   start-at start-after end-at end-before)
+           (clj->GetOptions get-options)))
 
 (defn get-effect [{:keys [path-document
                           path-collection where order-by limit
@@ -322,7 +342,7 @@
                      on-failure)))
 
 (defn- on-snapshotter [reference-or-query snapshot-listen-options on-next on-error]
-  (.onSnapshot reference-or-query
+  (onSnapshot reference-or-query
     (clj->SnapshotListenOptions snapshot-listen-options)
     on-next
     (if on-error (event->fn on-error) (core/default-error-handler))))
@@ -340,8 +360,8 @@
                       snapshot-listen-options
                       (document-parser-wrapper on-next snapshot-options expose-objects)
                       on-error)
-      (on-snapshotter (query (clj->CollectionReference path-collection) where order-by limit
-                             start-at start-after end-at end-before)
+      (on-snapshotter (apply-query-constraints (clj->CollectionReference path-collection) where order-by limit
+                                            start-at start-after end-at end-before)
                       snapshot-listen-options
                       (collection-parser-wrapper on-next snapshot-options snapshot-listen-options
                                                  doc-changes expose-objects)
