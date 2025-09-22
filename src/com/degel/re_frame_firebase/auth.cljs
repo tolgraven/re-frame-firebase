@@ -57,7 +57,7 @@
           (.catch (core/default-error-handler))))))
 
 (defn- oauth-sign-in
-  [auth-provider opts]
+  [^js auth-provider opts]
   (let [{:keys [sign-in-method scopes custom-parameters link-with-credential]
          :or {sign-in-method :redirect}} opts]
 
