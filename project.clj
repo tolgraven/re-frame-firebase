@@ -14,6 +14,11 @@
   :cljsbuild {:builds {}} ; prevent https://github.com/emezeske/lein-cljsbuild/issues/413
   :plugins [[lein-npm "0.6.2"]]
   :npm {:dependencies [[source-map-support "0.5.6"]]}
+  :repositories [["private" {:url "https://tolgraven.hel1.your-objectstorage.com/m2/releases/"
+                             :no-auth true}]]
+  :deploy-repositories [["private-local" {:url "file:.deploy-m2"
+                                          :sign-releases false}]]
+
   :source-paths ["src" "target/classes"]
   :clean-targets ["out" "release"]
   :target-path "target")
