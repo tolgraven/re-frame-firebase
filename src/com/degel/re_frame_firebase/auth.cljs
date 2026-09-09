@@ -39,9 +39,8 @@
   (-> (getAuth)
       (getRedirectResult)
       (.then (fn on-user-credential [user-credential]
-               (-> user-credential
-                   (.-user)
-                   set-user)))
+               (when user-credential
+                 (set-user (.-user user-credential)))))
       (.catch (core/default-error-handler))))
 
 (def ^:private sign-in-fns
